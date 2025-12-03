@@ -1,5 +1,5 @@
 @description('The location for all resources')
-param location string = resourceGroup().location
+param location string = 'Sweden Central'
 
 @description('The name prefix for all resources')
 param namePrefix string = 'azapppatching'

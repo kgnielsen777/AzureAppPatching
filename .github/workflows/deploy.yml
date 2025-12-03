@@ -20,7 +20,7 @@ on:
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: '.'
   RESOURCE_GROUP_NAME: 'rg-azapppatching-${{ github.event.inputs.environment || 'dev' }}'
-  LOCATION: 'East US'
+  LOCATION: 'Sweden Central'
 
 jobs:
   validate:
