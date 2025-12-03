@@ -74,9 +74,8 @@ try {
     
     Write-Host "Successfully processed $processedCount inventory entries"
     
-    # Clean up old inventory entries (keep last 30 days)
-    Write-Host "Cleaning up old inventory entries..."
-    Clear-OldInventoryEntries -ServerName $sqlServerName -DatabaseName $sqlDatabaseName -DaysToKeep 30
+    # TODO: Clean up old inventory entries (keep last 30 days) - need to verify stored procedure exists
+    # Clear-OldInventoryEntries -ServerName $sqlServerName -DatabaseName $sqlDatabaseName -DaysToKeep 30
     
     # Log summary
     $summary = @{
