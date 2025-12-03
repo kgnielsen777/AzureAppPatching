@@ -7,7 +7,8 @@ This project implements automated patching solutions for 3rd party applications 
 - **Azure Functions**: Serverless compute for inventory collection and patch deployment
 - **Azure Arc**: Hybrid management plane for executing commands on remote VMs
 - **Azure Storage Account**: Centralized storage for patches and metadata using Table Storage
-- **Azure Resource Graph**: Query engine for discovering Arc-enabled resources
+- **Azure Resource Graph**: Query engine for discovering Arc-enabled resources and software inventory via Defender for Servers
+- **Microsoft Defender for Servers**: Provides software inventory data via securityresources table
 - **PowerShell/Azure CLI**: Primary automation scripting languages
 
 ## Project Structure
@@ -79,8 +80,8 @@ public class ApplicationRepoEntity : TableEntity
 - Avoid connection strings - leverage managed identity with Azure PowerShell modules
 
 ### Azure Arc Integration
-- Use Azure Resource Graph to query installed applications across Arc-enabled VMs
-- Leverage `Microsoft.HybridCompute/machines/extensions` for software inventory data
+- Use Azure Resource Graph to query Defender for Servers software inventory across Arc-enabled VMs
+- Leverage `microsoft.security/softwareinventories` in securityresources table for complete software catalog
 - Implement `az connectedmachine run-command` for patch deployment only
 - Use system-assigned managed identity for Arc resource access and authentication
 - Grant Function App managed identity appropriate RBAC roles for Arc operations
@@ -129,26 +130,18 @@ az connectedmachine list --query "[].{Name:name, Status:status, Location:locatio
 
 ### Inventory Collection
 ```powershell
-# Query all Arc-enabled machines and their installed software
+# Query ALL software inventory from Defender for Servers via Resource Graph
 az graph query --graph-query "
-Resources
-| where type == 'microsoft.hybridcompute/machines'
-| extend machineName = name, machineId = id, osType = properties.osName
-| join kind=leftouter (
-    Resources
-    | where type == 'microsoft.hybridcompute/machines/extensions'
-    | where properties.publisher == 'Microsoft.Azure.Monitor'
-    | extend machineName = split(id, '/')[8]
-    | project machineName, softwareInventory = properties.settings.workspaceId
-) on machineName
-| project machineName, machineId, osType, resourceGroup = split(id, '/')[4]"
-
-# Query ALL software inventory from Azure Monitor workspace
-az monitor log-analytics query --workspace {workspace-id} --analytics-query "
-InstalledSoftware
-| where TimeGenerated > ago(24h)
-| summarize by Computer, SoftwareName, SoftwareVersion, Publisher
-| project Computer, SoftwareName, SoftwareVersion, Publisher"
+securityresources
+| where type == 'microsoft.security/softwareinventories'
+| where properties.machineName != ''
+| extend machineName = tostring(properties.machineName),
+         softwareName = tostring(properties.softwareName),
+         softwareVersion = tostring(properties.version),
+         publisher = tostring(properties.publisher),
+         lastScanTime = todatetime(properties.endOfSupportDate)
+| where isnotempty(machineName) and isnotempty(softwareName)
+| project machineName, softwareName, softwareVersion, publisher, lastScanTime"
 ```
 
 ### Patch Deployment
@@ -172,7 +165,7 @@ az connectedmachine run-command create --resource-group rg-patching --machine-na
 - **Azure Key Vault**: Optional secure storage for non-Azure secrets (if needed)
 
 ## Application Patching Workflow
-1. **Inventory Function**: Queries Azure Resource Graph and Monitor workspace for all installed software
+1. **Inventory Function**: Queries Azure Resource Graph and Defender for Servers for all installed software
 2. **Data Processing**: Stores ALL discovered applications and versions (no filtering at inventory stage)
 3. **Storage**: Stores complete inventory results in VM Inventory Table Storage
 4. **Version Check**: Compares installed versions against Application Repo table for supported applications only

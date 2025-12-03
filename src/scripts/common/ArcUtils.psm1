@@ -3,7 +3,6 @@ param()
 
 # Import required modules
 Import-Module Az.ResourceGraph -Force
-Import-Module Az.Monitor -Force
 
 function Invoke-ResourceGraphQuery {
     <#
@@ -86,36 +85,49 @@ Resources
     return Invoke-ResourceGraphQuery -Query $query -Subscriptions $Subscriptions
 }
 
-function Get-InstalledSoftwareFromMonitor {
+function Get-InstalledSoftwareFromDefender {
     <#
     .SYNOPSIS
-    Gets installed software inventory from Azure Monitor Log Analytics
+    Gets installed software inventory from Defender for Servers via Azure Resource Graph
     #>
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$WorkspaceId,
+        [Parameter(Mandatory = $false)]
+        [string[]]$Subscriptions,
         
         [Parameter(Mandatory = $false)]
-        [int]$HoursBack = 24
+        [int]$DaysBack = 7
     )
     
     try {
-        Write-Host "Querying Azure Monitor for software inventory..."
+        Write-Host "Querying Defender for Servers software inventory via Resource Graph..."
         
         $query = @"
-InstalledSoftware
-| where TimeGenerated > ago($($HoursBack)h)
-| summarize by Computer, SoftwareName, SoftwareVersion, Publisher
+securityresources
+| where type == "microsoft.security/softwareInventories"
+| where todatetime(properties.timeGenerated) > ago($($DaysBack)d)
+| project
+    ResourceId = id,
+    ResourceName = name,
+    Computer = tostring(split(id, '/')[8]),
+    ResourceType = properties.resourceDetails.resourceType,
+    OSPlatform = properties.resourceDetails.osPlatform,
+    SoftwareName = properties.softwareName,
+    Vendor = properties.vendor,
+    SoftwareVersion = tostring(properties.version),
+    Publisher = properties.vendor,
+    LastUpdated = properties.timeGenerated
+| where OSPlatform == "Windows"
+| summarize by Computer, SoftwareName, SoftwareVersion, Publisher, Vendor
 | project Computer, SoftwareName, SoftwareVersion, Publisher
 "@
         
-        $results = Invoke-AzOperationalInsightsQuery -WorkspaceId $WorkspaceId -Query $query
+        $results = Invoke-ResourceGraphQuery -Query $query -Subscriptions $Subscriptions
         
-        Write-Host "Found $($results.Results.Count) software inventory entries"
-        return $results.Results
+        Write-Host "Found $($results.Count) software inventory entries from Defender for Servers"
+        return $results
     }
     catch {
-        Write-Error "Failed to query Azure Monitor for software inventory: $($_.Exception.Message)"
+        Write-Error "Failed to query Defender for Servers software inventory: $($_.Exception.Message)"
         throw
     }
 }
@@ -243,7 +255,7 @@ function Wait-ForArcRunCommand {
 Export-ModuleMember -Function @(
     'Invoke-ResourceGraphQuery',
     'Get-ArcEnabledMachines',
-    'Get-InstalledSoftwareFromMonitor',
+    'Get-InstalledSoftwareFromDefender',
     'Invoke-ArcRunCommand',
     'Wait-ForArcRunCommand'
 )

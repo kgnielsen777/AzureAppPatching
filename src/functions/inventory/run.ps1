@@ -8,15 +8,9 @@ Import-Module (Join-Path $commonPath "ArcUtils.psm1") -Force
 
 # Get configuration from environment variables
 $storageAccountName = $env:STORAGE_ACCOUNT_NAME
-$workspaceId = $env:LOG_ANALYTICS_WORKSPACE_ID
 
 if (-not $storageAccountName) {
     Write-Error "STORAGE_ACCOUNT_NAME environment variable not set"
-    exit 1
-}
-
-if (-not $workspaceId) {
-    Write-Error "LOG_ANALYTICS_WORKSPACE_ID environment variable not set"  
     exit 1
 }
 
@@ -33,9 +27,9 @@ try {
     $arcMachines = Get-ArcEnabledMachines
     Write-Host "Found $($arcMachines.Count) Arc-enabled machines"
     
-    # Get installed software from Azure Monitor
-    Write-Host "Querying software inventory from Azure Monitor..."
-    $softwareInventory = Get-InstalledSoftwareFromMonitor -WorkspaceId $workspaceId
+    # Get installed software from Defender for Servers
+    Write-Host "Querying software inventory from Defender for Servers..."
+    $softwareInventory = Get-InstalledSoftwareFromDefender
     Write-Host "Found $($softwareInventory.Count) software inventory entries"
     
     # Process and store inventory data

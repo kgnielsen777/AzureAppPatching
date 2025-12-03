@@ -13,34 +13,6 @@ param storageAccountType string = 'Standard_LRS'
 var functionAppName = '${namePrefix}-func-${environment}'
 var storageAccountName = '${namePrefix}sa${environment}'
 var appServicePlanName = '${namePrefix}-plan-${environment}'
-var applicationInsightsName = '${namePrefix}-ai-${environment}'
-var logAnalyticsName = '${namePrefix}-law-${environment}'
-
-// Log Analytics Workspace
-resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
-  name: logAnalyticsName
-  location: location
-  properties: {
-    sku: {
-      name: 'PerGB2018'
-    }
-    retentionInDays: 30
-    features: {
-      searchVersion: 1
-    }
-  }
-}
-
-// Application Insights
-resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
-  name: applicationInsightsName
-  location: location
-  kind: 'web'
-  properties: {
-    Application_Type: 'web'
-    WorkspaceResourceId: logAnalytics.id
-  }
-}
 
 // Storage Account for patches and Table Storage
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -124,20 +96,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: '7.4'
         }
         {
-          name: 'APPINSIGHTS_INSTRUMENTATIONKEY'
-          value: applicationInsights.properties.InstrumentationKey
-        }
-        {
-          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-          value: applicationInsights.properties.ConnectionString
-        }
-        {
           name: 'STORAGE_ACCOUNT_NAME'
           value: storageAccount.name
-        }
-        {
-          name: 'LOG_ANALYTICS_WORKSPACE_ID'
-          value: logAnalytics.properties.customerId
         }
       ]
       powerShellVersion: '7.4'
@@ -187,5 +147,3 @@ resource arcResourceManagerRole 'Microsoft.Authorization/roleAssignments@2022-04
 output functionAppName string = functionApp.name
 output functionAppPrincipalId string = functionApp.identity.principalId
 output storageAccountName string = storageAccount.name
-output applicationInsightsName string = applicationInsights.name
-output logAnalyticsWorkspaceId string = logAnalytics.properties.customerId
