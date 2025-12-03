@@ -9,9 +9,8 @@
 - Resource group for deployment
 
 ### Local Development Environment
-- Azure CLI 2.50+ 
+- PowerShell 7.4+ with Azure PowerShell module
 - Azure Functions Core Tools v4
-- PowerShell 7.4+
 - Git
 - VS Code (recommended) with Azure Functions extension
 
@@ -22,9 +21,9 @@
 
 ## Step 1: Clone Repository
 
-```bash
+```powershell
 git clone https://github.com/kgnielsen777/AzureAppPatching.git
-cd AzureAppPatching
+Set-Location AzureAppPatching
 ```
 
 ## Step 2: Configure Parameters
@@ -43,7 +42,7 @@ Edit `infra/bicep/main.parameters.json`:
       "value": "prod"
     },
     "location": {
-      "value": "East US 2"
+      "value": "Sweden Central"
     }
   }
 }
@@ -51,21 +50,21 @@ Edit `infra/bicep/main.parameters.json`:
 
 ## Step 3: Deploy Infrastructure
 
-```bash
+```powershell
 # Login to Azure
-az login
+Connect-AzAccount
 
 # Set subscription
-az account set --subscription "your-subscription-id"
+Set-AzContext -SubscriptionId "your-subscription-id"
 
 # Create resource group
-az group create --name "rg-apppatching-prod" --location "East US 2"
+New-AzResourceGroup -Name "rg-apppatching-prod" -Location "Sweden Central"
 
 # Deploy Bicep template
-az deployment group create \
-  --resource-group "rg-apppatching-prod" \
-  --template-file infra/bicep/main.bicep \
-  --parameters @infra/bicep/main.parameters.json
+New-AzResourceGroupDeployment `
+  -ResourceGroupName "rg-apppatching-prod" `
+  -TemplateFile "infra/bicep/main.bicep" `
+  -TemplateParameterFile "infra/bicep/main.parameters.json"
 ```
 
 The deployment creates:
@@ -77,20 +76,20 @@ The deployment creates:
 
 ## Step 4: Configure Local Development
 
-```bash
+```powershell
 # Update local.settings.json with your values
-cat > local.settings.json << EOF
-{
-  "IsEncrypted": false,
-  "Values": {
-    "AzureWebJobsStorage": "DefaultEndpointsProtocol=https;AccountName=yoursa;AccountKey=...",
-    "FUNCTIONS_WORKER_RUNTIME": "powershell", 
-    "FUNCTIONS_WORKER_RUNTIME_VERSION": "7.4",
-    "STORAGE_ACCOUNT_NAME": "your-storage-account-name",
-    "LOG_ANALYTICS_WORKSPACE_ID": "your-workspace-id"
+$localSettings = @{
+  IsEncrypted = $false
+  Values = @{
+    AzureWebJobsStorage = "DefaultEndpointsProtocol=https;AccountName=yoursa;AccountKey=..."
+    FUNCTIONS_WORKER_RUNTIME = "powershell"
+    FUNCTIONS_WORKER_RUNTIME_VERSION = "7.4"
+    STORAGE_ACCOUNT_NAME = "your-storage-account-name"
+    LOG_ANALYTICS_WORKSPACE_ID = "your-workspace-id"
   }
 }
-EOF
+
+$localSettings | ConvertTo-Json -Depth 3 | Out-File "local.settings.json" -Encoding UTF8
 
 # Test functions locally
 func start --powershell
@@ -98,15 +97,13 @@ func start --powershell
 
 ## Step 5: Deploy Function App
 
-```bash
+```powershell
 # Get Function App name from deployment output
-FUNCTION_APP_NAME=$(az deployment group show \
-  --resource-group "rg-apppatching-prod" \
-  --name "main" \
-  --query "properties.outputs.functionAppName.value" -o tsv)
+$deployment = Get-AzResourceGroupDeployment -ResourceGroupName "rg-apppatching-prod" -Name "main"
+$functionAppName = $deployment.Outputs.functionAppName.Value
 
 # Deploy function code
-func azure functionapp publish $FUNCTION_APP_NAME
+func azure functionapp publish $functionAppName
 ```
 
 ## Step 6: Seed Application Repository
@@ -144,71 +141,66 @@ Write-Host "Application repository seeded successfully"
 
 ### Check Function Status
 
-```bash
+```powershell
 # List functions
-az functionapp function list \
-  --name $FUNCTION_APP_NAME \
-  --resource-group "rg-apppatching-prod" \
-  --query "[].{Name:name, Status:config.disabled}" -o table
+Get-AzWebAppFunction -ResourceGroupName "rg-apppatching-prod" -Name $functionAppName | 
+  Select-Object Name, @{Name='Status'; Expression={-not $_.Config.disabled}} | 
+  Format-Table
 
-# Check function logs
-az functionapp logs tail \
-  --name $FUNCTION_APP_NAME \
-  --resource-group "rg-apppatching-prod"
+# Check function logs (use Azure portal or Application Insights)
+Write-Host "View logs at: https://portal.azure.com/#resource/subscriptions/$((Get-AzContext).Subscription.Id)/resourceGroups/rg-apppatching-prod/providers/Microsoft.Web/sites/$functionAppName/logs"
 ```
 
 ### Test Inventory Function
 
 The inventory function runs automatically every 6 hours. To trigger manually:
 
-```bash
-# Get the master key
-MASTER_KEY=$(az functionapp keys list \
-  --name $FUNCTION_APP_NAME \
-  --resource-group "rg-apppatching-prod" \
-  --query "masterKey" -o tsv)
+```powershell
+# Get the function app details
+$functionApp = Get-AzWebApp -ResourceGroupName "rg-apppatching-prod" -Name $functionAppName
+$masterKey = (Invoke-AzResourceAction -ResourceId "$($functionApp.Id)/host/default/listKeys" -Action "POST" -Force).masterKey
 
 # Trigger inventory function
-curl -X POST "https://$FUNCTION_APP_NAME.azurewebsites.net/admin/functions/inventory" \
-  -H "Content-Type: application/json" \
-  -H "x-functions-key: $MASTER_KEY" \
-  -d '{}'
+$uri = "https://$($functionApp.DefaultHostName)/admin/functions/inventory"
+$headers = @{
+  'Content-Type' = 'application/json'
+  'x-functions-key' = $masterKey
+}
+Invoke-RestMethod -Uri $uri -Method POST -Headers $headers -Body '{}'
 ```
 
 ### Test Patching Function
 
-```bash
+```powershell
 # Get function URL
-PATCH_URL=$(az functionapp function show \
-  --name $FUNCTION_APP_NAME \
-  --resource-group "rg-apppatching-prod" \
-  --function-name patching \
-  --query "invokeUrlTemplate" -o tsv)
+$patchFunction = Get-AzWebAppFunction -ResourceGroupName "rg-apppatching-prod" -Name $functionAppName -FunctionName "patching"
+$patchUrl = $patchFunction.InvokeUrlTemplate
 
 # Test patch deployment (replace with actual VM details)
-curl -X POST "$PATCH_URL" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "machineName": "your-vm-name",
-    "softwareName": "Google Chrome", 
-    "version": "120.0.6099.109",
-    "resourceGroupName": "your-vm-resource-group"
-  }'
+$body = @{
+  machineName = "your-vm-name"
+  softwareName = "Google Chrome"
+  version = "120.0.6099.109"
+  resourceGroupName = "your-vm-resource-group"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri $patchUrl -Method POST -ContentType "application/json" -Body $body
 ```
 
 ## Step 8: Monitor Operations
 
 ### Application Insights
 
-```bash
-# Get Application Insights resource
-AI_NAME=$(az deployment group show \
-  --resource-group "rg-apppatching-prod" \
-  --name "main" \
-  --query "properties.outputs.applicationInsightsName.value" -o tsv)
-
-# View in portal
-echo "Application Insights: https://portal.azure.com/#resource/subscriptions/$(az account show --query id -o tsv)/resourceGroups/rg-apppatching-prod/providers/Microsoft.Insights/components/$AI_NAME"
+```powershell
+# Get Application Insights resource (if created)
+$deployment = Get-AzResourceGroupDeployment -ResourceGroupName "rg-apppatching-prod" -Name "main"
+if ($deployment.Outputs.applicationInsightsName) {
+  $aiName = $deployment.Outputs.applicationInsightsName.Value
+  $subscriptionId = (Get-AzContext).Subscription.Id
+  Write-Host "Application Insights: https://portal.azure.com/#resource/subscriptions/$subscriptionId/resourceGroups/rg-apppatching-prod/providers/Microsoft.Insights/components/$aiName"
+} else {
+  Write-Host "Application Insights not configured in current deployment"
+}
 ```
 
 ### Table Storage Data
@@ -234,56 +226,54 @@ $recentEntries | Format-Table
 ### Common Issues
 
 **Function App Identity Issues**
-```bash
+```powershell
 # Verify managed identity is assigned
-az functionapp identity show \
-  --name $FUNCTION_APP_NAME \
-  --resource-group "rg-apppatching-prod"
+$functionApp = Get-AzWebApp -ResourceGroupName "rg-apppatching-prod" -Name $functionAppName
+Write-Host "Managed Identity Principal ID: $($functionApp.Identity.PrincipalId)"
+Write-Host "Identity Type: $($functionApp.Identity.Type)"
 
 # Check RBAC assignments
-az role assignment list \
-  --assignee $(az functionapp identity show --name $FUNCTION_APP_NAME --resource-group "rg-apppatching-prod" --query principalId -o tsv) \
-  --all
+Get-AzRoleAssignment -ObjectId $functionApp.Identity.PrincipalId | 
+  Select-Object DisplayName, RoleDefinitionName, Scope | 
+  Format-Table
 ```
 
 **Storage Access Issues**
-```bash
+```powershell
 # Test storage connectivity
-az storage account show \
-  --name "your-storage-account-name" \
-  --resource-group "rg-apppatching-prod"
+$storageAccount = Get-AzStorageAccount -ResourceGroupName "rg-apppatching-prod" -Name "your-storage-account-name"
+Write-Host "Storage Account Status: $($storageAccount.ProvisioningState)"
+Write-Host "Primary Endpoint: $($storageAccount.PrimaryEndpoints.Table)"
 
 # Check table existence
-az storage table list \
-  --account-name "your-storage-account-name" \
-  --auth-mode login
+$ctx = $storageAccount.Context
+Get-AzStorageTable -Context $ctx | Select-Object Name | Format-Table
 ```
 
 **Arc Connectivity Issues**
-```bash
+```powershell
 # List Arc machines
-az connectedmachine list \
-  --query "[].{Name:name, Status:status, Location:location}" -o table
+Get-AzConnectedMachine | 
+  Select-Object Name, Status, Location | 
+  Format-Table
 
 # Test Arc machine connectivity
-az connectedmachine extension list \
-  --machine-name "your-vm-name" \
-  --resource-group "your-vm-resource-group"
+Get-AzConnectedMachineExtension -MachineName "your-vm-name" -ResourceGroupName "your-vm-resource-group" | 
+  Select-Object Name, ProvisioningState, TypeHandlerVersion | 
+  Format-Table
 ```
 
 ### Debug Function Execution
 
-```bash
-# Stream function logs
-az functionapp logs tail \
-  --name $FUNCTION_APP_NAME \
-  --resource-group "rg-apppatching-prod"
+```powershell
+# View function logs (redirect to Azure portal)
+$subscriptionId = (Get-AzContext).Subscription.Id
+Write-Host "Stream logs at: https://portal.azure.com/#resource/subscriptions/$subscriptionId/resourceGroups/rg-apppatching-prod/providers/Microsoft.Web/sites/$functionAppName/logs"
 
-# Get function execution history
-az functionapp function show \
-  --name $FUNCTION_APP_NAME \
-  --resource-group "rg-apppatching-prod" \
-  --function-name inventory
+# Get function details
+Get-AzWebAppFunction -ResourceGroupName "rg-apppatching-prod" -Name $functionAppName -FunctionName "inventory" | 
+  Select-Object Name, Config | 
+  Format-List
 ```
 
 ## Production Considerations
@@ -337,21 +327,27 @@ az functionapp function show \
    ```
 
 2. **Monitor Storage Growth**
-   ```bash
+   ```powershell
    # Check table storage metrics
-   az monitor metrics list \
-     --resource "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/rg-apppatching-prod/providers/Microsoft.Storage/storageAccounts/your-storage-account-name" \
-     --metric "TableCount" \
-     --start-time $(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
+   $subscriptionId = (Get-AzContext).Subscription.Id
+   $resourceId = "/subscriptions/$subscriptionId/resourceGroups/rg-apppatching-prod/providers/Microsoft.Storage/storageAccounts/your-storage-account-name"
+   $startTime = (Get-Date).AddDays(-7).ToString('yyyy-MM-ddTHH:mm:ssZ')
+   
+   Get-AzMetric -ResourceId $resourceId -MetricName "TableCount" -StartTime $startTime | 
+     Select-Object Name, @{Name='Value'; Expression={$_.Data.Average}} | 
+     Format-Table
    ```
 
 3. **Review Function Performance**
-   ```bash
+   ```powershell
    # Check function execution metrics
-   az monitor metrics list \
-     --resource "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/rg-apppatching-prod/providers/Microsoft.Web/sites/$FUNCTION_APP_NAME" \
-     --metric "FunctionExecutionCount" \
-     --start-time $(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
+   $subscriptionId = (Get-AzContext).Subscription.Id
+   $resourceId = "/subscriptions/$subscriptionId/resourceGroups/rg-apppatching-prod/providers/Microsoft.Web/sites/$functionAppName"
+   $startTime = (Get-Date).AddDays(-7).ToString('yyyy-MM-ddTHH:mm:ssZ')
+   
+   Get-AzMetric -ResourceId $resourceId -MetricName "FunctionExecutionCount" -StartTime $startTime | 
+     Select-Object Name, @{Name='ExecutionCount'; Expression={$_.Data.Total}} | 
+     Format-Table
    ```
 
 ## Next Steps
