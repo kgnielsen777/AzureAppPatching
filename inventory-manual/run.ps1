@@ -2,7 +2,7 @@
 param($Request, $TriggerMetadata)
 
 # Import common modules
-$commonPath = Join-Path $PSScriptRoot "..\scripts\common"
+$commonPath = Join-Path $PSScriptRoot "..\src\scripts\common"
 Import-Module (Join-Path $commonPath "SqlDatabaseUtils.psm1") -Force
 Import-Module (Join-Path $commonPath "ArcUtils.psm1") -Force
 
