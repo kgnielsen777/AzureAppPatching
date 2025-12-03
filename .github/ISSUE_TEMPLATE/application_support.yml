@@ -1,0 +1,105 @@
+name: Application Support Request
+description: Request support for a new application
+title: "[App Support]: "
+labels: ["enhancement", "new-application", "triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Request support for patching a new application with Azure App Patching solution.
+
+  - type: input
+    id: app-name
+    attributes:
+      label: Application Name
+      description: What application do you want to add support for?
+      placeholder: e.g., Microsoft Office, Adobe Reader, 7-Zip
+    validations:
+      required: true
+
+  - type: input
+    id: vendor
+    attributes:
+      label: Vendor/Publisher
+      description: Who publishes this application?
+      placeholder: e.g., Microsoft, Adobe, Igor Pavlov
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Which platforms does this application support?
+      multiple: true
+      options:
+        - Windows x64
+        - Windows x86
+        - Windows ARM64
+        - Linux (future support)
+    validations:
+      required: true
+
+  - type: textarea
+    id: install-method
+    attributes:
+      label: Installation Method
+      description: How is this application typically installed?
+      placeholder: |
+        - MSI installer with /quiet flag
+        - EXE with /S parameter
+        - Windows Package Manager (winget)
+        - Chocolatey package
+        - Custom installer
+    validations:
+      required: true
+
+  - type: input
+    id: download-url
+    attributes:
+      label: Download URL Pattern
+      description: Where can the installer be downloaded from?
+      placeholder: https://example.com/download/app-{version}.msi
+
+  - type: textarea
+    id: version-detection
+    attributes:
+      label: Version Detection
+      description: How can the current version be detected?
+      placeholder: |
+        - Registry key: HKLM\SOFTWARE\...
+        - File version: C:\Program Files\App\app.exe
+        - Command line: app.exe --version
+    validations:
+      required: true
+
+  - type: textarea
+    id: silent-install
+    attributes:
+      label: Silent Installation Commands
+      description: What commands are needed for silent installation?
+      placeholder: |
+        installer.msi /quiet /norestart INSTALLDIR="C:\Program Files\App"
+    validations:
+      required: true
+
+  - type: textarea
+    id: special-requirements
+    attributes:
+      label: Special Requirements
+      description: Any special requirements or considerations?
+      placeholder: |
+        - Requires admin privileges
+        - Needs service restart
+        - Specific installation path required
+        - Dependencies on other software
+
+  - type: checkboxes
+    id: verification
+    attributes:
+      label: Verification
+      options:
+        - label: I have tested manual installation with the provided commands
+        - label: I can provide test environment access if needed
+        - label: I understand this may take time to implement

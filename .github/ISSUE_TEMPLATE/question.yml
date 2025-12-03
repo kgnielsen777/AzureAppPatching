@@ -1,0 +1,69 @@
+name: Question
+description: Ask a question about usage, configuration, or troubleshooting
+title: "[Question]: "
+labels: ["question", "triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? We're here to help!
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      description: What is your question about?
+      options:
+        - Installation & Setup
+        - Configuration
+        - Troubleshooting
+        - Azure Arc Integration
+        - Function App Deployment
+        - Application Support
+        - Performance & Scaling
+        - Security & Permissions
+        - Monitoring & Logging
+        - Best Practices
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: What would you like to know?
+      placeholder: Please be as specific as possible...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Provide any relevant context or background
+      placeholder: |
+        - What are you trying to accomplish?
+        - What have you already tried?
+        - Any relevant configuration details?
+
+  - type: textarea
+    id: environment-info
+    attributes:
+      label: Environment (if relevant)
+      description: Provide environment details if applicable
+      placeholder: |
+        - Azure Region:
+        - Number of Arc VMs:
+        - Applications being patched:
+        - Function App configuration:
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have checked the documentation
+        - label: I have searched existing issues and discussions
+        - label: This is not a bug report (use bug report template instead)
