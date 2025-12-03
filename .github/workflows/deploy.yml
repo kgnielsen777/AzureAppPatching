@@ -1,0 +1,220 @@
+name: Deploy Azure App Patching Solution
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - test
+        - prod
+
+env:
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.'
+  RESOURCE_GROUP_NAME: 'rg-azapppatching-${{ github.event.inputs.environment || 'dev' }}'
+  LOCATION: 'East US'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup PowerShell
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          Write-Host "PowerShell validation"
+          # Add PowerShell syntax validation here if needed
+        azPSVersion: "latest"
+    
+    - name: Validate Bicep templates
+      run: |
+        az bicep build --file infra/bicep/main.bicep
+
+  infrastructure:
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    outputs:
+      functionAppName: ${{ steps.deploy.outputs.functionAppName }}
+      storageAccountName: ${{ steps.deploy.outputs.storageAccountName }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Create Resource Group
+      run: |
+        az group create --name ${{ env.RESOURCE_GROUP_NAME }} --location "${{ env.LOCATION }}"
+    
+    - name: Deploy Infrastructure
+      id: deploy
+      run: |
+        deployment=$(az deployment group create \
+          --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
+          --template-file infra/bicep/main.bicep \
+          --parameters environment=${{ github.event.inputs.environment || 'dev' }} \
+          --output json)
+        
+        functionAppName=$(echo $deployment | jq -r '.properties.outputs.functionAppName.value')
+        storageAccountName=$(echo $deployment | jq -r '.properties.outputs.storageAccountName.value')
+        
+        echo "functionAppName=$functionAppName" >> $GITHUB_OUTPUT
+        echo "storageAccountName=$storageAccountName" >> $GITHUB_OUTPUT
+        
+        echo "Deployed Function App: $functionAppName"
+        echo "Deployed Storage Account: $storageAccountName"
+
+  seed-data:
+    needs: infrastructure
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Setup PowerShell
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          # Import common modules
+          Import-Module "${{ github.workspace }}/src/scripts/common/TableStorageUtils.psm1" -Force
+          
+          # Connect to Azure
+          Connect-AzAccount -Identity
+          
+          # Seed Chrome application repository data
+          $storageAccountName = "${{ needs.infrastructure.outputs.storageAccountName }}"
+          
+          Add-ApplicationRepoEntry -StorageAccountName $storageAccountName `
+                                   -SoftwareName "Google Chrome" `
+                                   -Version "120.0.6099.109" `
+                                   -InstallCmd "https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe /silent /install" `
+                                   -Vendor "Google"
+          
+          Add-ApplicationRepoEntry -StorageAccountName $storageAccountName `
+                                   -SoftwareName "Mozilla Firefox" `
+                                   -Version "121.0" `
+                                   -InstallCmd "https://download.mozilla.org/?product=firefox-latest&os=win64&lang=en-US /S" `
+                                   -Vendor "Mozilla"
+          
+          Write-Host "Seeded application repository data"
+        azPSVersion: "latest"
+
+  deploy-functions:
+    needs: [infrastructure, seed-data]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup PowerShell
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"
+        azPSVersion: "latest"
+    
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Deploy Function App
+      uses: Azure/functions-action@v1
+      with:
+        app-name: ${{ needs.infrastructure.outputs.functionAppName }}
+        package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+    
+    - name: Verify Function Deployment
+      run: |
+        functionAppName="${{ needs.infrastructure.outputs.functionAppName }}"
+        
+        # Wait for functions to be ready
+        sleep 30
+        
+        # Test inventory function (timer trigger, so we'll check if it exists)
+        inventoryStatus=$(az functionapp function show \
+          --name $functionAppName \
+          --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
+          --function-name inventory \
+          --query "config.bindings[0].type" -o tsv 2>/dev/null || echo "not-found")
+        
+        # Test patching function (HTTP trigger)
+        patchingUrl=$(az functionapp function show \
+          --name $functionAppName \
+          --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
+          --function-name patching \
+          --query "invokeUrlTemplate" -o tsv 2>/dev/null || echo "not-found")
+        
+        if [[ "$inventoryStatus" == "timerTrigger" ]]; then
+          echo "✅ Inventory function deployed successfully"
+        else
+          echo "❌ Inventory function deployment failed"
+          exit 1
+        fi
+        
+        if [[ "$patchingUrl" != "not-found" ]]; then
+          echo "✅ Patching function deployed successfully"
+          echo "Patching URL: $patchingUrl"
+        else
+          echo "❌ Patching function deployment failed"
+          exit 1
+        fi
+
+  test-integration:
+    needs: [infrastructure, deploy-functions]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Test Function App Health
+      run: |
+        functionAppName="${{ needs.infrastructure.outputs.functionAppName }}"
+        
+        # Get function app URL
+        functionAppUrl=$(az functionapp show \
+          --name $functionAppName \
+          --resource-group ${{ env.RESOURCE_GROUP_NAME }} \
+          --query "defaultHostName" -o tsv)
+        
+        # Test basic connectivity
+        healthUrl="https://$functionAppUrl"
+        
+        echo "Testing Function App health at: $healthUrl"
+        
+        for i in {1..5}; do
+          if curl -f -s "$healthUrl" >/dev/null; then
+            echo "✅ Function App is healthy"
+            break
+          else
+            echo "⏳ Waiting for Function App to be ready (attempt $i/5)..."
+            sleep 30
+          fi
+        done
