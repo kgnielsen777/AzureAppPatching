@@ -214,8 +214,9 @@ catch {
     
     # If resource group not provided, try to determine from Arc machine
     if (-not $resourceGroupName) {
-        Write-Host "Looking up resource group for Arc machine $machineName"
-        $arcMachines = Get-ArcEnabledMachines
+        Write-Host "Looking up resource group for Arc Windows machine $machineName"
+        # TODO: Add Linux machine support for patching operations
+        $arcMachines = Get-ArcEnabledMachines -WindowsOnly $true
         $targetMachine = $arcMachines | Where-Object { $_.machineName -eq $machineName }
         
         if ($targetMachine) {

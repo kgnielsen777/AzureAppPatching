@@ -69,15 +69,26 @@ function Get-ArcEnabledMachines {
     <#
     .SYNOPSIS
     Gets all Azure Arc-enabled machines
+    .PARAMETER WindowsOnly
+    Filter to only return Windows machines (default: true)
+    .NOTES
+    TODO: Add Linux support for patching operations
+    Currently filtering to Windows only as patching scripts are Windows-specific
     #>
     param(
         [Parameter(Mandatory = $false)]
-        [string[]]$Subscriptions
+        [string[]]$Subscriptions,
+        
+        [Parameter(Mandatory = $false)]
+        [bool]$WindowsOnly = $true
     )
+    
+    $whereClause = if ($WindowsOnly) { "| where properties.osName == 'Windows'" } else { "" }
     
     $query = @"
 Resources
 | where type == 'microsoft.hybridcompute/machines'
+$whereClause
 | extend machineName = name, machineId = id, osType = properties.osName, status = properties.status
 | project machineName, machineId, osType, status, resourceGroup, location, subscriptionId
 "@
@@ -100,6 +111,7 @@ function Get-InstalledSoftwareFromDefender {
     
     try {
         Write-Host "Querying Defender for Servers software inventory via Resource Graph..."
+        Write-Host "Note: Currently filtering to Windows platforms only. TODO: Add Linux support."
         
         $query = @"
 securityresources
@@ -116,7 +128,7 @@ securityresources
     SoftwareVersion = tostring(properties.version),
     Publisher = properties.vendor,
     LastUpdated = properties.timeGenerated
-| where OSPlatform == "Windows"
+| where OSPlatform == "Windows"  // TODO: Support Linux patching
 | summarize by Computer, SoftwareName, SoftwareVersion, Publisher, Vendor
 | project Computer, SoftwareName, SoftwareVersion, Publisher
 "@

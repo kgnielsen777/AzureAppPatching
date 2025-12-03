@@ -22,10 +22,11 @@ try {
         throw "Failed to connect to Azure with managed identity"
     }
     
-    # Get all Arc-enabled machines
-    Write-Host "Discovering Arc-enabled machines..."
-    $arcMachines = Get-ArcEnabledMachines
-    Write-Host "Found $($arcMachines.Count) Arc-enabled machines"
+    # Get all Arc-enabled machines (Windows only for now)
+    Write-Host "Discovering Arc-enabled Windows machines..."
+    $arcMachines = Get-ArcEnabledMachines -WindowsOnly $true
+    Write-Host "Found $($arcMachines.Count) Arc-enabled Windows machines"
+    # TODO: Add Linux Arc machine support for inventory collection
     
     # Get installed software from Defender for Servers
     Write-Host "Querying software inventory from Defender for Servers..."
