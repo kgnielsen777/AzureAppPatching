@@ -112,26 +112,29 @@ public class ApplicationRepoEntity : TableEntity
 func start --powershell
 
 # Deploy infrastructure with managed identity enabled
-az deployment group create --resource-group rg-patching --template-file infra/bicep/main.bicep
+New-AzResourceGroupDeployment -ResourceGroupName rg-patching -TemplateFile infra/bicep/main.bicep
 
 # Deploy function app
 func azure functionapp publish func-app-patching
 
 # Assign required RBAC roles to Function App managed identity
-az role assignment create --assignee $(az functionapp identity show --resource-group rg-patching --name func-app-patching --query principalId -o tsv) --role "Storage Table Data Contributor" --scope /subscriptions/{subscription-id}/resourceGroups/rg-patching/providers/Microsoft.Storage/storageAccounts/{storage-account}
+# RBAC roles are automatically assigned by the Bicep template
+# Manual assignment example (if needed):
+$functionApp = Get-AzWebApp -ResourceGroupName rg-patching -Name func-app-patching
+$principalId = $functionApp.Identity.PrincipalId
 
-az role assignment create --assignee $(az functionapp identity show --resource-group rg-patching --name func-app-patching --query principalId -o tsv) --role "Azure Connected Machine Resource Manager" --scope /subscriptions/{subscription-id}
-
-az role assignment create --assignee $(az functionapp identity show --resource-group rg-patching --name func-app-patching --query principalId -o tsv) --role "Reader" --scope /subscriptions/{subscription-id}
+New-AzRoleAssignment -ObjectId $principalId -RoleDefinitionName "Storage Table Data Contributor" -Scope "/subscriptions/{subscription-id}/resourceGroups/rg-patching/providers/Microsoft.Storage/storageAccounts/{storage-account}"
+New-AzRoleAssignment -ObjectId $principalId -RoleDefinitionName "Azure Connected Machine Resource Manager" -Scope "/subscriptions/{subscription-id}"
+New-AzRoleAssignment -ObjectId $principalId -RoleDefinitionName "Reader" -Scope "/subscriptions/{subscription-id}"
 
 # Test Arc connectivity
-az connectedmachine list --query "[].{Name:name, Status:status, Location:location}"
+Get-AzConnectedMachine | Select-Object Name, Status, Location | Format-Table
 ```
 
 ### Inventory Collection
 ```powershell
 # Query ALL software inventory from Defender for Servers via Resource Graph
-az graph query --graph-query "
+$query = @"
 securityresources
 | where type == 'microsoft.security/softwareinventories'
 | where properties.machineName != ''
@@ -141,13 +144,18 @@ securityresources
          publisher = tostring(properties.publisher),
          lastScanTime = todatetime(properties.endOfSupportDate)
 | where isnotempty(machineName) and isnotempty(softwareName)
-| project machineName, softwareName, softwareVersion, publisher, lastScanTime"
+| project machineName, softwareName, softwareVersion, publisher, lastScanTime
+"@
+
+Search-AzGraph -Query $query
 ```
 
 ### Patch Deployment
 ```powershell
 # Deploy Chrome update to specific VM
-az connectedmachine run-command create --resource-group rg-patching --machine-name vm-01 --command-id patch-chrome --script-path scripts/chrome/Install-Chrome.ps1 --parameters version=120.0.6099.109
+# Arc run-command is handled programmatically by the patching function via REST API
+# Manual example for testing:
+Invoke-AzRestMethod -Uri "https://management.azure.com/subscriptions/{subscription}/resourceGroups/rg-patching/providers/Microsoft.HybridCompute/machines/vm-01/runCommands?api-version=2023-10-03-preview" -Method POST -Payload $scriptContent
 
 # Deploy Firefox update
 az connectedmachine run-command create --resource-group rg-patching --machine-name vm-01 --command-id patch-firefox --script-path scripts/firefox/Install-Firefox.ps1 --parameters version=121.0

@@ -4,8 +4,7 @@
 
 ### Azure Resources
 - Azure subscription with appropriate permissions
-- Azure Arc-enabled Windows VMs
-- Azure Monitor Log Analytics workspace with software inventory data
+- Azure Arc-enabled Windows VMs with Defender for Servers enabled
 - Resource group for deployment
 
 ### Local Development Environment
@@ -70,9 +69,7 @@ New-AzResourceGroupDeployment `
 The deployment creates:
 - Azure Function App with system-assigned managed identity
 - Storage Account with Table Storage (VmInventory, ApplicationRepo tables)
-- Application Insights for monitoring
-- Log Analytics Workspace
-- Required RBAC role assignments
+- Required RBAC role assignments for Resource Graph and Arc operations
 
 ## Step 4: Configure Local Development
 
@@ -85,7 +82,6 @@ $localSettings = @{
     FUNCTIONS_WORKER_RUNTIME = "powershell"
     FUNCTIONS_WORKER_RUNTIME_VERSION = "7.4"
     STORAGE_ACCOUNT_NAME = "your-storage-account-name"
-    LOG_ANALYTICS_WORKSPACE_ID = "your-workspace-id"
   }
 }
 
