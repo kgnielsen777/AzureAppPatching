@@ -44,6 +44,34 @@ Currently, the Azure App Patching solution only supports Windows-based Arc-enabl
 
 ## Medium Priority
 
+### Native Azure VM Support
+**Status**: Not Started  
+**Priority**: Medium  
+**Estimated Effort**: Medium  
+
+Add support for native Azure VMs (not requiring Arc agent) using:
+- [ ] Azure VM Run Command instead of Arc run commands
+- [ ] Azure Resource Graph queries for Azure VMs (`Microsoft.Compute/virtualMachines`)
+- [ ] VM Extensions for software inventory collection
+- [ ] Hybrid approach supporting both Arc and native Azure VMs
+- [ ] Update Bicep templates to include VM Run Command permissions
+- [ ] Modify PowerShell modules to detect VM type and use appropriate execution method
+
+### Storage Account File Hosting
+**Status**: Not Started  
+**Priority**: Medium  
+**Estimated Effort**: Medium  
+
+Store application installers and updates in Azure Storage Account:
+- [ ] Create blob container for application installers in storage account
+- [ ] Update application repository schema to support local file paths
+- [ ] Implement installer download/caching mechanism in installation scripts
+- [ ] Add blob storage permissions to Function App managed identity
+- [ ] Create upload workflow for adding new application installers
+- [ ] Implement version management for stored installers
+- [ ] Add cleanup policies for old installer versions
+- [ ] Update Chrome/Firefox/Java scripts to use local storage when available
+
 ### Enhanced Error Handling
 - [ ] Add retry logic for network failures during patch downloads
 - [ ] Implement rollback capability for failed patches
