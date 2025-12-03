@@ -22,26 +22,132 @@ try {
     # Parse request body
     $requestBody = $Request.Body | ConvertFrom-Json
     
-    # Validate required parameters
-    if (-not $requestBody.machineName -or -not $requestBody.softwareName -or -not $requestBody.version) {
-        throw "Missing required parameters: machineName, softwareName, version"
+    # Support both single VM and batch patching
+    $patchJobs = @()
+    
+    if ($requestBody.patchJobs) {
+        # Batch mode - array of patch jobs
+        $patchJobs = $requestBody.patchJobs
+        Write-Host "Batch patching mode: $($patchJobs.Count) patch jobs requested"
+    }
+    elseif ($requestBody.machineName -and $requestBody.softwareName -and $requestBody.version) {
+        # Single mode - individual patch job
+        $patchJobs = @(@{
+            machineName = $requestBody.machineName
+            softwareName = $requestBody.softwareName
+            version = $requestBody.version
+            resourceGroupName = $requestBody.resourceGroupName
+        })
+        Write-Host "Single patching mode: 1 patch job requested"
+    }
+    else {
+        throw "Invalid request format. Use either single mode (machineName, softwareName, version) or batch mode (patchJobs array)"
     }
     
-    $machineName = $requestBody.machineName
-    $softwareName = $requestBody.softwareName
-    $targetVersion = $requestBody.version
-    $resourceGroupName = $requestBody.resourceGroupName
+    $results = @()
+    $maxConcurrency = if ($requestBody.maxConcurrency) { $requestBody.maxConcurrency } else { 5 }
     
-    Write-Host "Starting patch deployment for $softwareName $targetVersion on $machineName"
+    Write-Host "Starting patch deployment for $($patchJobs.Count) job(s)"
     
     # Connect to Azure with managed identity
     if (-not (Connect-ToAzureWithManagedIdentity)) {
         throw "Failed to connect to Azure with managed identity"
     }
     
+    # Process patch jobs in batches to respect concurrency limits
+    $processedJobs = 0
+    
+    for ($i = 0; $i -lt $patchJobs.Count; $i += $maxConcurrency) {
+        $batch = $patchJobs[$i..([Math]::Min($i + $maxConcurrency - 1, $patchJobs.Count - 1))]
+        Write-Host "Processing batch $([Math]::Floor($i / $maxConcurrency) + 1) with $($batch.Count) jobs"
+        
+        $batchResults = @()
+        
+        foreach ($job in $batch) {
+            try {
+                $result = Invoke-PatchJob -Job $job -StorageAccountName $storageAccountName
+                $batchResults += $result
+            }
+            catch {
+                $errorResult = @{
+                    MachineName = $job.machineName
+                    SoftwareName = $job.softwareName
+                    Version = $job.version
+                    Status = "Failed"
+                    Error = $_.Exception.Message
+                    Timestamp = (Get-Date).ToString('o')
+                }
+                $batchResults += $errorResult
+                Write-Warning "Failed to process job for $($job.machineName) - $($job.softwareName): $($_.Exception.Message)"
+            }
+        }
+        
+        $results += $batchResults
+        $processedJobs += $batch.Count
+        
+        Write-Host "Completed batch. Progress: $processedJobs/$($patchJobs.Count)"
+        
+        # Small delay between batches to avoid overwhelming Arc endpoints
+        if ($i + $maxConcurrency -lt $patchJobs.Count) {
+            Start-Sleep -Seconds 2
+        }
+    }
+    
+    # Prepare summary response
+    $summary = @{
+        TotalJobs = $patchJobs.Count
+        SuccessfulJobs = ($results | Where-Object { $_.Status -eq "Success" }).Count
+        FailedJobs = ($results | Where-Object { $_.Status -eq "Failed" }).Count
+        Results = $results
+        Timestamp = (Get-Date).ToString('o')
+        ProcessingMode = if ($patchJobs.Count -eq 1) { "Single" } else { "Batch" }
+    }
+    
+    Write-Host "Patch deployment completed. Success: $($summary.SuccessfulJobs), Failed: $($summary.FailedJobs)"
+    
+    # Return response
+    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+        StatusCode = [System.Net.HttpStatusCode]::OK
+        Body = $summary
+    })
+}
+catch {
+    $errorMessage = "Patch deployment failed: $($_.Exception.Message)"
+    Write-Error $errorMessage
+    
+    $errorResult = @{
+        Status = "Failed"
+        Error = $errorMessage
+        Timestamp = (Get-Date).ToString('o')
+        TotalJobs = if ($patchJobs) { $patchJobs.Count } else { 0 }
+    }
+    
+    # Return error response
+    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+        StatusCode = [System.Net.HttpStatusCode]::InternalServerError
+        Body = $errorResult
+    })
+}
+
+function Invoke-PatchJob {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Job,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$StorageAccountName
+    )
+    
+    $machineName = $Job.machineName
+    $softwareName = $Job.softwareName
+    $targetVersion = $Job.version
+    $resourceGroupName = $Job.resourceGroupName
+    
+    Write-Host "Processing patch job for $softwareName $targetVersion on $machineName"
+    
     # Get application repository entry
     Write-Host "Looking up application repository entry for $softwareName $targetVersion"
-    $appRepoEntry = Get-ApplicationRepoEntry -StorageAccountName $storageAccountName -SoftwareName $softwareName -Version $targetVersion
+    $appRepoEntry = Get-ApplicationRepoEntry -StorageAccountName $StorageAccountName -SoftwareName $softwareName -Version $targetVersion
     
     if (-not $appRepoEntry) {
         throw "No application repository entry found for $softwareName version $targetVersion"
@@ -56,12 +162,12 @@ try {
         "java" { Join-Path $PSScriptRoot "..\..\scripts\java\Install-Java.ps1" }
         default { 
             Write-Warning "No specific script found for $softwareName, using generic installer"
-            Join-Path $PSScriptRoot "..\..\scripts\common\Install-Generic.ps1"
+            $null  # Will use generic script content below
         }
     }
     
     # Read script content
-    if (Test-Path $scriptPath) {
+    if ($scriptPath -and (Test-Path $scriptPath)) {
         $scriptContent = Get-Content -Path $scriptPath -Raw
     }
     else {
@@ -140,8 +246,8 @@ catch {
                                              -OperationId $runCommandResult.name `
                                              -TimeoutMinutes 15
     
-    # Log the deployment
-    $deploymentResult = @{
+    # Return the deployment result
+    return @{
         MachineName = $machineName
         SoftwareName = $softwareName
         Version = $targetVersion
@@ -149,32 +255,6 @@ catch {
         CommandId = $commandId
         Timestamp = (Get-Date).ToString('o')
         Output = $completionResult.properties.output
+        ResourceGroup = $resourceGroupName
     }
-    
-    Write-Host "Patch deployment completed successfully: $($deploymentResult | ConvertTo-Json -Compress)"
-    
-    # Return success response
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
-        StatusCode = [System.Net.HttpStatusCode]::OK
-        Body = $deploymentResult
-    })
-}
-catch {
-    $errorMessage = "Patch deployment failed: $($_.Exception.Message)"
-    Write-Error $errorMessage
-    
-    $errorResult = @{
-        MachineName = $machineName
-        SoftwareName = $softwareName
-        Version = $targetVersion
-        Status = "Failed"
-        Error = $errorMessage
-        Timestamp = (Get-Date).ToString('o')
-    }
-    
-    # Return error response
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
-        StatusCode = [System.Net.HttpStatusCode]::InternalServerError
-        Body = $errorResult
-    })
 }
