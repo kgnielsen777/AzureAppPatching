@@ -1,5 +1,5 @@
-# Azure Function to collect VM inventory via Resource Graph and store in SQL Database
-param($Timer)
+# Azure Function to manually trigger VM inventory collection via HTTP
+param($Request, $TriggerMetadata)
 
 # Import common modules
 $commonPath = Join-Path $PSScriptRoot "..\..\scripts\common"
@@ -12,11 +12,15 @@ $sqlDatabaseName = $env:SQL_DATABASE_NAME
 
 if (-not $sqlServerName -or -not $sqlDatabaseName) {
     Write-Error "SQL_SERVER_NAME or SQL_DATABASE_NAME environment variables not set"
-    exit 1
+    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+        StatusCode = [System.Net.HttpStatusCode]::InternalServerError
+        Body = @{ error = "Configuration error: Missing SQL database settings" }
+    })
+    return
 }
 
 try {
-    Write-Host "Starting VM inventory collection..."
+    Write-Host "Starting manual VM inventory collection..."
     
     # Connect to Azure with managed identity
     if (-not (Connect-ToAzureWithManagedIdentity)) {
@@ -27,7 +31,6 @@ try {
     Write-Host "Discovering Arc-enabled Windows machines..."
     $arcMachines = Get-ArcEnabledMachines -WindowsOnly $true
     Write-Host "Found $($arcMachines.Count) Arc-enabled Windows machines"
-    # TODO: Add Linux Arc machine support for inventory collection
     
     # Get installed software from Defender for Servers
     Write-Host "Querying software inventory from Defender for Servers..."
@@ -77,13 +80,15 @@ try {
     
     # Log summary
     $summary = @{
+        Status = "Success"
         ArcMachinesFound = $arcMachines.Count
         SoftwareEntriesFound = $softwareInventory.Count
         EntriesProcessed = $processedCount
         Timestamp = $currentDate.ToString('o')
+        Message = "Manual inventory collection completed successfully"
     }
     
-    Write-Host "Inventory collection completed successfully: $($summary | ConvertTo-Json -Compress)"
+    Write-Host "Manual inventory collection completed: $($summary | ConvertTo-Json -Compress)"
     
     # Return success response
     Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
@@ -92,12 +97,12 @@ try {
     })
 }
 catch {
-    $errorMessage = "Inventory collection failed: $($_.Exception.Message)"
+    $errorMessage = "Manual inventory collection failed: $($_.Exception.Message)"
     Write-Error $errorMessage
     
     # Return error response
     Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
         StatusCode = [System.Net.HttpStatusCode]::InternalServerError
-        Body = @{ error = $errorMessage }
+        Body = @{ error = $errorMessage; timestamp = (Get-Date).ToString('o') }
     })
 }

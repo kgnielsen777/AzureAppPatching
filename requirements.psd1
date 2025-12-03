@@ -5,5 +5,6 @@
     'Az.Accounts' = '3.0.*'
     'Az.Storage' = '7.0.*'
     'Az.ResourceGraph' = '1.0.*'
-    'AzTable' = '2.1.*'
+    'Az.Sql' = '5.0.*'
+    'SqlServer' = '22.0.*'
 }

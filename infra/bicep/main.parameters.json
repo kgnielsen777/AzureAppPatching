@@ -3,13 +3,19 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "namePrefix": {
-      "value": "azapppatching"
+      "value": "app-patching"
     },
     "environment": {
       "value": "dev"
     },
     "location": {
       "value": "Sweden Central"
+    },
+    "sqlAdminObjectId": {
+      "value": "63465840-db57-4b36-9b9f-40622e382645"
+    },
+    "sqlAdminPrincipalName": {
+      "value": "admin@MngEnvMCAP077611.onmicrosoft.com"
     }
   }
 }

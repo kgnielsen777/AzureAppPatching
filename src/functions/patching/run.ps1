@@ -3,17 +3,18 @@ param($Request, $TriggerMetadata)
 
 # Import common modules
 $commonPath = Join-Path $PSScriptRoot "..\..\scripts\common"
-Import-Module (Join-Path $commonPath "TableStorageUtils.psm1") -Force
+Import-Module (Join-Path $commonPath "SqlDatabaseUtils.psm1") -Force
 Import-Module (Join-Path $commonPath "ArcUtils.psm1") -Force
 
 # Get configuration from environment variables
-$storageAccountName = $env:STORAGE_ACCOUNT_NAME
+$sqlServerName = $env:SQL_SERVER_NAME
+$sqlDatabaseName = $env:SQL_DATABASE_NAME
 
-if (-not $storageAccountName) {
-    Write-Error "STORAGE_ACCOUNT_NAME environment variable not set"
+if (-not $sqlServerName -or -not $sqlDatabaseName) {
+    Write-Error "SQL_SERVER_NAME or SQL_DATABASE_NAME environment variables not set"
     Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
         StatusCode = [System.Net.HttpStatusCode]::InternalServerError
-        Body = @{ error = "STORAGE_ACCOUNT_NAME environment variable not set" }
+        Body = @{ error = "SQL_SERVER_NAME or SQL_DATABASE_NAME environment variables not set" }
     })
     return
 }
@@ -65,7 +66,7 @@ try {
         
         foreach ($job in $batch) {
             try {
-                $result = Invoke-PatchJob -Job $job -StorageAccountName $storageAccountName
+                $result = Invoke-PatchJob -Job $job -SqlServerName $sqlServerName -SqlDatabaseName $sqlDatabaseName
                 $batchResults += $result
             }
             catch {
@@ -135,7 +136,10 @@ function Invoke-PatchJob {
         [hashtable]$Job,
         
         [Parameter(Mandatory = $true)]
-        [string]$StorageAccountName
+        [string]$SqlServerName,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$SqlDatabaseName
     )
     
     $machineName = $Job.machineName
@@ -145,15 +149,24 @@ function Invoke-PatchJob {
     
     Write-Host "Processing patch job for $softwareName $targetVersion on $machineName"
     
-    # Get application repository entry
-    Write-Host "Looking up application repository entry for $softwareName $targetVersion"
-    $appRepoEntry = Get-ApplicationRepoEntry -StorageAccountName $StorageAccountName -SoftwareName $softwareName -Version $targetVersion
+    # Create patch job entry
+    $jobId = New-PatchJob -ServerName $SqlServerName -DatabaseName $SqlDatabaseName `
+                         -VmName $machineName -SoftwareName $softwareName `
+                         -TargetVersion $targetVersion
     
-    if (-not $appRepoEntry) {
-        throw "No application repository entry found for $softwareName version $targetVersion"
-    }
+    Write-Host "Created patch job with ID: $jobId"
     
-    Write-Host "Found application entry: Vendor=$($appRepoEntry.Vendor), InstallCmd=$($appRepoEntry.InstallCmd)"
+    try {
+        # Get application repository entry
+        Write-Host "Looking up application repository entry for $softwareName"
+        $appRepoEntry = Get-ApplicationRepoEntry -ServerName $SqlServerName -DatabaseName $SqlDatabaseName -SoftwareName $softwareName
+        
+        if (-not $appRepoEntry -or $appRepoEntry.Rows.Count -eq 0) {
+            throw "No application repository entry found for $softwareName"
+        }
+        
+        $repoRow = $appRepoEntry.Rows[0]
+        Write-Host "Found application entry: Vendor=$($repoRow.Vendor), InstallCmd=$($repoRow.InstallCmd), Version=$($repoRow.Version)"
     
     # Determine script path based on software name
     $scriptPath = switch ($softwareName.ToLower()) {
@@ -205,12 +218,12 @@ catch {
 "@
     }
     
-    # Prepare parameters for the script
-    $scriptParameters = @{
-        InstallCommand = $appRepoEntry.InstallCmd
-        Version = $targetVersion
-        SoftwareName = $softwareName
-    }
+        # Prepare parameters for the script
+        $scriptParameters = @{
+            InstallCommand = $repoRow.InstallCmd
+            Version = $targetVersion
+            SoftwareName = $softwareName
+        }
     
     # If resource group not provided, try to determine from Arc machine
     if (-not $resourceGroupName) {
@@ -228,34 +241,53 @@ catch {
         }
     }
     
-    # Execute the installation via Arc run-command
-    Write-Host "Executing installation command on $machineName via Arc run-command..."
-    
-    $commandId = "patch-$($softwareName.Replace(' ', '').ToLower())-$(Get-Date -Format 'yyyyMMddHHmmss')"
-    
-    $runCommandResult = Invoke-ArcRunCommand -ResourceGroupName $resourceGroupName `
-                                           -MachineName $machineName `
-                                           -CommandId $commandId `
-                                           -ScriptContent $scriptContent `
-                                           -Parameters $scriptParameters `
-                                           -TimeoutSeconds 600
-    
-    # Wait for completion
-    Write-Host "Waiting for installation to complete..."
-    $completionResult = Wait-ForArcRunCommand -ResourceGroupName $resourceGroupName `
-                                             -MachineName $machineName `
-                                             -OperationId $runCommandResult.name `
-                                             -TimeoutMinutes 15
-    
-    # Return the deployment result
-    return @{
-        MachineName = $machineName
-        SoftwareName = $softwareName
-        Version = $targetVersion
-        Status = "Success"
-        CommandId = $commandId
-        Timestamp = (Get-Date).ToString('o')
-        Output = $completionResult.properties.output
-        ResourceGroup = $resourceGroupName
+        # Update patch job status to Running
+        Update-PatchJob -ServerName $SqlServerName -DatabaseName $SqlDatabaseName `
+                       -JobId $jobId -Status "Running"
+        
+        # Execute the installation via Arc run-command
+        Write-Host "Executing installation command on $machineName via Arc run-command..."
+        
+        $commandId = "patch-$($softwareName.Replace(' ', '').ToLower())-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        
+        $runCommandResult = Invoke-ArcRunCommand -ResourceGroupName $resourceGroupName `
+                                               -MachineName $machineName `
+                                               -CommandId $commandId `
+                                               -ScriptContent $scriptContent `
+                                               -Parameters $scriptParameters `
+                                               -TimeoutSeconds 600
+        
+        # Wait for completion
+        Write-Host "Waiting for installation to complete..."
+        $completionResult = Wait-ForArcRunCommand -ResourceGroupName $resourceGroupName `
+                                                 -MachineName $machineName `
+                                                 -OperationId $runCommandResult.name `
+                                                 -TimeoutMinutes 15
+        
+        # Update patch job status to Success
+        Update-PatchJob -ServerName $SqlServerName -DatabaseName $SqlDatabaseName `
+                       -JobId $jobId -Status "Succeeded" `
+                       -ExecutionLog $completionResult.properties.output
+        
+        # Return the deployment result
+        return @{
+            JobId = $jobId
+            MachineName = $machineName
+            SoftwareName = $softwareName
+            Version = $targetVersion
+            Status = "Success"
+            CommandId = $commandId
+            Timestamp = (Get-Date).ToString('o')
+            Output = $completionResult.properties.output
+            ResourceGroup = $resourceGroupName
+        }
+    }
+    catch {
+        # Update patch job status to Failed
+        Update-PatchJob -ServerName $SqlServerName -DatabaseName $SqlDatabaseName `
+                       -JobId $jobId -Status "Failed" `
+                       -ErrorMessage $_.Exception.Message
+        
+        throw
     }
 }
