@@ -82,8 +82,15 @@ function Invoke-SqlCommand {
             $finalQuery = $finalQuery.Replace($paramName, $paramValue)
         }
         
+        # Build server instance name - handle both short names and FQDNs
+        $serverInstance = if ($ServerName.Contains('.database.windows.net')) { 
+            $ServerName 
+        } else { 
+            "$ServerName.database.windows.net" 
+        }
+        
         # Execute query
-        $result = Invoke-Sqlcmd -ServerInstance "$ServerName.database.windows.net" -Database $DatabaseName -Query $finalQuery -AccessToken $accessToken
+        $result = Invoke-Sqlcmd -ServerInstance $serverInstance -Database $DatabaseName -Query $finalQuery -AccessToken $accessToken
         return $result
     }
     catch {
@@ -116,11 +123,18 @@ function Add-VmInventoryEntry {
         [Parameter(Mandatory = $false)]
         [string]$Publisher = $null,
         
+        [Parameter(Mandatory = $false)]
+        [int]$numberOfKnownVulnerabilities = 0,
+        
         [datetime]$Date = (Get-Date)
     )
     
     try {
-        $query = "EXEC sp_AddVmInventoryEntry @VmName, @SoftwareName, @SoftwareVersion, @Publisher, @Date"
+        # Ensure vulnerability count is never null
+        if ($numberOfKnownVulnerabilities -eq $null) {
+            $numberOfKnownVulnerabilities = 0
+        }
+        $query = "EXEC sp_AddVmInventoryEntry @VmName, @SoftwareName, @SoftwareVersion, @Publisher, @Date, @numberOfKnownVulnerabilities"
         
         $parameters = @{
             VmName = $VmName
@@ -128,6 +142,7 @@ function Add-VmInventoryEntry {
             SoftwareVersion = $SoftwareVersion
             Publisher = $Publisher
             Date = $Date.ToString('yyyy-MM-dd HH:mm:ss')
+            numberOfKnownVulnerabilities = $numberOfKnownVulnerabilities
         }
         
         Invoke-SqlCommand -ServerName $ServerName -DatabaseName $DatabaseName -Query $query -Parameters $parameters | Out-Null

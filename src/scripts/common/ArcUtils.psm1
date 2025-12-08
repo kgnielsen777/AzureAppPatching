@@ -83,7 +83,7 @@ function Get-ArcEnabledMachines {
         [bool]$WindowsOnly = $true
     )
     
-    $whereClause = if ($WindowsOnly) { "| where properties.osName == 'Windows'" } else { "" }
+    $whereClause = if ($WindowsOnly) { "| where properties.osName == 'windows'" } else { "" }
     
     $query = @"
 Resources
@@ -106,7 +106,7 @@ function Get-InstalledSoftwareFromDefender {
         [string[]]$Subscriptions,
         
         [Parameter(Mandatory = $false)]
-        [int]$DaysBack = 7
+        [int]$DaysBack = 30
     )
     
     try {
@@ -115,22 +115,22 @@ function Get-InstalledSoftwareFromDefender {
         
         $query = @"
 securityresources
-| where type == "microsoft.security/softwareInventories"
-| where todatetime(properties.timeGenerated) > ago($($DaysBack)d)
+| where type == "microsoft.security/softwareinventories"
+| where todatetime(properties.firstSeenAt) > ago($($DaysBack)d)
 | project
     ResourceId = id,
     ResourceName = name,
     Computer = tostring(split(id, '/')[8]),
-    ResourceType = properties.resourceDetails.resourceType,
-    OSPlatform = properties.resourceDetails.osPlatform,
+    OSPlatform = properties.osPlatform,
     SoftwareName = properties.softwareName,
     Vendor = properties.vendor,
     SoftwareVersion = tostring(properties.version),
     Publisher = properties.vendor,
-    LastUpdated = properties.timeGenerated
-| where OSPlatform == "Windows"  // TODO: Support Linux patching
-| summarize by Computer, tostring(SoftwareName), SoftwareVersion, tostring(Publisher), tostring(Vendor)
-| project Computer, SoftwareName, SoftwareVersion, Publisher
+    numberOfKnownVulnerabilities = properties.numberOfKnownVulnerabilities,
+    LastUpdated = properties.firstSeenAt
+| where OSPlatform contains "Windows"  // TODO: Support Linux patching
+| summarize by Computer, tostring(SoftwareName), SoftwareVersion, tostring(Publisher), tostring(Vendor), tostring(numberOfKnownVulnerabilities)
+| project Computer, SoftwareName, SoftwareVersion, Publisher, numberOfKnownVulnerabilities
 "@
         
         $results = Invoke-ResourceGraphQuery -Query $query -Subscriptions $Subscriptions

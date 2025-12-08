@@ -8,12 +8,14 @@ CREATE TABLE VmInventory (
     SoftwareName NVARCHAR(255) NOT NULL,
     SoftwareVersion NVARCHAR(100) NOT NULL,
     Publisher NVARCHAR(255) NULL,
+    numberOfKnownVulnerabilities INT NOT NULL DEFAULT 0,
     Date DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     
     -- Create index for efficient querying
     INDEX IX_VmInventory_VmName_Date (VmName, Date DESC),
     INDEX IX_VmInventory_SoftwareName (SoftwareName),
+    INDEX IX_VmInventory_Vulnerabilities (numberOfKnownVulnerabilities DESC),
     
     -- Ensure uniqueness per VM, software, and date
     CONSTRAINT UK_VmInventory_VmSoftwareDate UNIQUE (VmName, SoftwareName, Date)
@@ -75,7 +77,8 @@ CREATE PROCEDURE sp_AddVmInventoryEntry
     @SoftwareName NVARCHAR(255),
     @SoftwareVersion NVARCHAR(100),
     @Publisher NVARCHAR(255) = NULL,
-    @Date DATETIME2 = NULL
+    @Date DATETIME2 = NULL,
+    @numberOfKnownVulnerabilities INT = 0
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -83,15 +86,22 @@ BEGIN
     IF @Date IS NULL
         SET @Date = GETUTCDATE();
     
+    -- Ensure vulnerability count is not NULL
+    IF @numberOfKnownVulnerabilities IS NULL
+        SET @numberOfKnownVulnerabilities = 0;
+    
     -- Use MERGE to handle duplicate entries
     MERGE VmInventory AS target
     USING (SELECT @VmName AS VmName, @SoftwareName AS SoftwareName, @Date AS Date) AS source
     ON target.VmName = source.VmName AND target.SoftwareName = source.SoftwareName AND target.Date = source.Date
     WHEN MATCHED THEN
-        UPDATE SET SoftwareVersion = @SoftwareVersion, Publisher = @Publisher, CreatedAt = GETUTCDATE()
+        UPDATE SET SoftwareVersion = @SoftwareVersion, 
+                   Publisher = @Publisher, 
+                   numberOfKnownVulnerabilities = @numberOfKnownVulnerabilities,
+                   CreatedAt = GETUTCDATE()
     WHEN NOT MATCHED THEN
-        INSERT (VmName, SoftwareName, SoftwareVersion, Publisher, Date)
-        VALUES (@VmName, @SoftwareName, @SoftwareVersion, @Publisher, @Date);
+        INSERT (VmName, SoftwareName, SoftwareVersion, Publisher, Date, numberOfKnownVulnerabilities)
+        VALUES (@VmName, @SoftwareName, @SoftwareVersion, @Publisher, @Date, @numberOfKnownVulnerabilities);
 END;
 GO
 

@@ -44,6 +44,9 @@ try {
             $arcMachine = $arcMachines | Where-Object { $_.machineName -eq $software.Computer }
             
             if ($arcMachine) {
+                # Ensure vulnerability count is not null
+                $vulnCount = if ($software.numberOfKnownVulnerabilities -eq $null -or $software.numberOfKnownVulnerabilities -eq '') { 0 } else { [int]$software.numberOfKnownVulnerabilities }
+                
                 # Store inventory entry in SQL Database
                 Add-VmInventoryEntry -ServerName $sqlServerName `
                                    -DatabaseName $sqlDatabaseName `
@@ -51,6 +54,7 @@ try {
                                    -SoftwareName $software.SoftwareName `
                                    -SoftwareVersion $software.SoftwareVersion `
                                    -Publisher $software.Publisher `
+                                   -numberOfKnownVulnerabilities $vulnCount `
                                    -Date $currentDate
                 
                 $processedCount++
