@@ -129,7 +129,7 @@ securityresources
     Publisher = properties.vendor,
     LastUpdated = properties.timeGenerated
 | where OSPlatform == "Windows"  // TODO: Support Linux patching
-| summarize by Computer, SoftwareName, SoftwareVersion, Publisher, Vendor
+| summarize by Computer, tostring(SoftwareName), SoftwareVersion, tostring(Publisher), tostring(Vendor)
 | project Computer, SoftwareName, SoftwareVersion, Publisher
 "@
         
