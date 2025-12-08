@@ -17,8 +17,8 @@ CREATE TABLE VmInventory (
     INDEX IX_VmInventory_SoftwareName (SoftwareName),
     INDEX IX_VmInventory_Vulnerabilities (numberOfKnownVulnerabilities DESC),
     
-    -- Ensure uniqueness per VM, software, and date
-    CONSTRAINT UK_VmInventory_VmSoftwareDate UNIQUE (VmName, SoftwareName, Date)
+    -- Ensure uniqueness per VM, software name, software version, and date
+    CONSTRAINT UK_VmInventory_VmSoftwareVersionDate UNIQUE (VmName, SoftwareName, SoftwareVersion, Date)
 );
 
 -- Create ApplicationRepo table
@@ -90,13 +90,15 @@ BEGIN
     IF @numberOfKnownVulnerabilities IS NULL
         SET @numberOfKnownVulnerabilities = 0;
     
-    -- Use MERGE to handle duplicate entries
+    -- Use MERGE to handle duplicate entries - includes SoftwareVersion in matching
     MERGE VmInventory AS target
-    USING (SELECT @VmName AS VmName, @SoftwareName AS SoftwareName, @Date AS Date) AS source
-    ON target.VmName = source.VmName AND target.SoftwareName = source.SoftwareName AND target.Date = source.Date
+    USING (SELECT @VmName AS VmName, @SoftwareName AS SoftwareName, @SoftwareVersion AS SoftwareVersion, @Date AS Date) AS source
+    ON target.VmName = source.VmName 
+       AND target.SoftwareName = source.SoftwareName 
+       AND target.SoftwareVersion = source.SoftwareVersion 
+       AND target.Date = source.Date
     WHEN MATCHED THEN
-        UPDATE SET SoftwareVersion = @SoftwareVersion, 
-                   Publisher = @Publisher, 
+        UPDATE SET Publisher = @Publisher, 
                    numberOfKnownVulnerabilities = @numberOfKnownVulnerabilities,
                    CreatedAt = GETUTCDATE()
     WHEN NOT MATCHED THEN

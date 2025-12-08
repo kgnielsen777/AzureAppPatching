@@ -116,7 +116,6 @@ function Get-InstalledSoftwareFromDefender {
         $query = @"
 securityresources
 | where type == "microsoft.security/softwareinventories"
-| where todatetime(properties.firstSeenAt) > ago($($DaysBack)d)
 | project
     ResourceId = id,
     ResourceName = name,

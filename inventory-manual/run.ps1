@@ -39,12 +39,20 @@ try {
     
     # Process and store inventory data
     $processedCount = 0
+    $skippedCount = 0
     $currentDate = Get-Date
+    
+    # Debug: Show Arc machine names
+    Write-Host "Arc machines found: $($arcMachines | ForEach-Object { $_.machineName } | Sort-Object)"
+    
+    # Debug: Show software computer names
+    $uniqueComputers = $softwareInventory | Select-Object -ExpandProperty Computer -Unique | Sort-Object
+    Write-Host "Software inventory computers: $($uniqueComputers -join ', ')"
     
     foreach ($software in $softwareInventory) {
         try {
-            # Find matching Arc machine
-            $arcMachine = $arcMachines | Where-Object { $_.machineName -eq $software.Computer }
+            # Find matching Arc machine (case-insensitive comparison)
+            $arcMachine = $arcMachines | Where-Object { $_.machineName -ieq $software.Computer }
             
             if ($arcMachine) {
                 # Ensure vulnerability count is not null
@@ -68,7 +76,8 @@ try {
                 }
             }
             else {
-                Write-Warning "No Arc machine found for computer: $($software.Computer)"
+                $skippedCount++
+                Write-Warning "No Arc machine found for computer: '$($software.Computer)' (Software: $($software.SoftwareName))"
             }
         }
         catch {
@@ -77,6 +86,7 @@ try {
     }
     
     Write-Host "Successfully processed $processedCount inventory entries"
+    Write-Host "Skipped $skippedCount entries (no matching Arc machine)"
     
     # TODO: Clean up old inventory entries (keep last 30 days) - need to verify stored procedure exists
     # Clear-OldInventoryEntries -ServerName $sqlServerName -DatabaseName $sqlDatabaseName -DaysToKeep 30
@@ -87,6 +97,7 @@ try {
         ArcMachinesFound = $arcMachines.Count
         SoftwareEntriesFound = $softwareInventory.Count
         EntriesProcessed = $processedCount
+        EntriesSkipped = $skippedCount
         Timestamp = $currentDate.ToString('o')
         Message = "Manual inventory collection completed successfully"
     }
